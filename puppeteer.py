@@ -13,7 +13,7 @@ mcp = FastMCP("android-puppeteer", "Puppeteer for Android")
 
 @mcp.tool()
 async def list_emulators() -> dict:
-    """List all available Android emulators and devices with their name, ID, and status"""
+    """List all available Android emulators and devices with their name, ID, status, and dimensions"""
     try:
         # Execute adb devices to get connected devices/emulators
         result = subprocess.run(['adb', 'devices'], capture_output=True, text=True, check=True)
@@ -52,11 +52,30 @@ async def list_emulators() -> dict:
                         except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
                             pass
 
+                    # Get device dimensions
+                    width, height, dimensions = None, None, None
+                    try:
+                        size_result = subprocess.run(
+                            ['adb', '-s', device_id, 'shell', 'wm', 'size'],
+                            capture_output=True, text=True, timeout=5
+                        )
+                        if size_result.returncode == 0:
+                            output = size_result.stdout.strip()
+                            if 'Physical size:' in output:
+                                size_part = output.split('Physical size:')[1].strip()
+                                width, height = map(int, size_part.split('x'))
+                                dimensions = f"{width}x{height}"
+                    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, ValueError):
+                        pass
+
                     devices.append({
                         "id": device_id,
                         "name": avd_name,
                         "status": status,
-                        "type": "emulator" if device_id.startswith('emulator-') else "device"
+                        "type": "emulator" if device_id.startswith('emulator-') else "device",
+                        "width": width,
+                        "height": height,
+                        "dimensions": dimensions
                     })
 
         return {
@@ -137,13 +156,13 @@ async def take_screenshot(device_id: str = None, name: str = None) -> dict:
             draw = ImageDraw.Draw(grid_img)
 
             # Grid settings
-            grid_size = 80
+            grid_size = 160
             grid_color = (255, 0, 0, 128)  # Semi-transparent red
             text_color = (255, 255, 255)  # White text
 
             # Try to use a default font, fallback to default if not available
             try:
-                font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 12)
+                font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 32)
             except (OSError, IOError):
                 font = ImageFont.load_default()
 
@@ -282,55 +301,6 @@ async def tap(x: int, y: int, device_id: str = None, duration: int = None) -> di
         }
 
 
-@mcp.tool()
-async def get_device_dimensions(device_id: str = None) -> dict:
-    """Get the screen dimensions (width and height) of the specified device/emulator."""
-    try:
-        # Build adb command to get display size
-        cmd = ['adb']
-        if device_id:
-            cmd.extend(['-s', device_id])
-        cmd.extend(['shell', 'wm', 'size'])
-
-        # Execute command
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-
-        # Parse output like "Physical size: 1080x2400"
-        output = result.stdout.strip()
-        if 'Physical size:' in output:
-            size_part = output.split('Physical size:')[1].strip()
-            width, height = map(int, size_part.split('x'))
-
-            return {
-                "success": True,
-                "width": width,
-                "height": height,
-                "dimensions": f"{width}x{height}",
-                "device_id": device_id or "default"
-            }
-        else:
-            return {
-                "success": False,
-                "error": f"Could not parse display size from output: {output}",
-                "device_id": device_id or "default"
-            }
-
-    except subprocess.CalledProcessError as e:
-        return {
-            "success": False,
-            "error": f"Failed to get device dimensions: {e}",
-            "stderr": e.stderr if e.stderr else ""
-        }
-    except FileNotFoundError:
-        return {
-            "success": False,
-            "error": "ADB not found. Please ensure Android SDK is installed and adb is in PATH."
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "error": f"Unexpected error: {e}"
-        }
 
 
 if __name__ == "__main__":
