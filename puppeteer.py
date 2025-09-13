@@ -1,5 +1,7 @@
 from typing import Any
 import subprocess
+import os
+from datetime import datetime
 from mcp.server.fastmcp import FastMCP
 
 # Initialize FastMCP server
@@ -80,6 +82,66 @@ async def list_emulators() -> dict:
             "error": f"Unexpected error: {e}",
             "devices": [],
             "count": 0
+        }
+
+
+@mcp.tool()
+async def take_screenshot(device_id: str = None) -> dict:
+    """Take a screenshot and save it under /ss directory"""
+    try:
+        # Create /ss directory if it doesn't exist
+        ss_dir = "/ss"
+        os.makedirs(ss_dir, exist_ok=True)
+
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"screenshot_{timestamp}.png"
+        filepath = os.path.join(ss_dir, filename)
+
+        # Build adb command
+        cmd = ['adb']
+        if device_id:
+            cmd.extend(['-s', device_id])
+        cmd.extend(['exec-out', 'screencap', '-p'])
+
+        # Execute screenshot command
+        result = subprocess.run(cmd, capture_output=True, check=True)
+
+        # Save screenshot to file
+        with open(filepath, 'wb') as f:
+            f.write(result.stdout)
+
+        return {
+            "success": True,
+            "message": f"Screenshot saved successfully",
+            "filepath": filepath,
+            "filename": filename,
+            "device_id": device_id or "default"
+        }
+
+    except subprocess.CalledProcessError as e:
+        return {
+            "success": False,
+            "error": f"Failed to take screenshot: {e}",
+            "filepath": None
+        }
+    except FileNotFoundError:
+        return {
+            "success": False,
+            "error": "ADB not found. Please ensure Android SDK is installed and adb is in PATH.",
+            "filepath": None
+        }
+    except PermissionError:
+        return {
+            "success": False,
+            "error": f"Permission denied: Cannot create directory or write to {ss_dir}",
+            "filepath": None
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Unexpected error: {e}",
+            "filepath": None
         }
 
 
