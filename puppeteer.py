@@ -90,9 +90,9 @@ async def list_emulators() -> dict:
 async def take_screenshot(device_id: str = None) -> dict:
     """Take a screenshot for the specified device/emulator. If no device_id is provided, uses the default device."""
     try:
-        # Use system temp directory for screenshots
-        ss_dir = tempfile.gettempdir()
-        screenshots_dir = os.path.join(ss_dir, "android_screenshots")
+        # Use android-puppeteer/ss directory for screenshots
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        screenshots_dir = os.path.join(current_dir, "ss")
         os.makedirs(screenshots_dir, exist_ok=True)
 
         # Generate filename with timestamp
