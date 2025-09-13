@@ -282,6 +282,57 @@ async def tap(x: int, y: int, device_id: str = None, duration: int = None) -> di
         }
 
 
+@mcp.tool()
+async def get_device_dimensions(device_id: str = None) -> dict:
+    """Get the screen dimensions (width and height) of the specified device/emulator."""
+    try:
+        # Build adb command to get display size
+        cmd = ['adb']
+        if device_id:
+            cmd.extend(['-s', device_id])
+        cmd.extend(['shell', 'wm', 'size'])
+
+        # Execute command
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        # Parse output like "Physical size: 1080x2400"
+        output = result.stdout.strip()
+        if 'Physical size:' in output:
+            size_part = output.split('Physical size:')[1].strip()
+            width, height = map(int, size_part.split('x'))
+
+            return {
+                "success": True,
+                "width": width,
+                "height": height,
+                "dimensions": f"{width}x{height}",
+                "device_id": device_id or "default"
+            }
+        else:
+            return {
+                "success": False,
+                "error": f"Could not parse display size from output: {output}",
+                "device_id": device_id or "default"
+            }
+
+    except subprocess.CalledProcessError as e:
+        return {
+            "success": False,
+            "error": f"Failed to get device dimensions: {e}",
+            "stderr": e.stderr if e.stderr else ""
+        }
+    except FileNotFoundError:
+        return {
+            "success": False,
+            "error": "ADB not found. Please ensure Android SDK is installed and adb is in PATH."
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Unexpected error: {e}"
+        }
+
+
 if __name__ == "__main__":
     # Initialize and run the server
     mcp.run(transport='stdio')
