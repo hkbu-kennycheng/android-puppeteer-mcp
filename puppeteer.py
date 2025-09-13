@@ -87,7 +87,7 @@ async def list_emulators() -> dict:
 
 
 @mcp.tool()
-async def take_screenshot(device_id: str = None) -> dict:
+async def take_screenshot(device_id: str = None, name: str = None) -> dict:
     """Take a screenshot for the specified device/emulator. If no device_id is provided, uses the default device."""
     try:
         # Use android-puppeteer/ss directory for screenshots
@@ -95,9 +95,17 @@ async def take_screenshot(device_id: str = None) -> dict:
         screenshots_dir = os.path.join(current_dir, "ss")
         os.makedirs(screenshots_dir, exist_ok=True)
 
-        # Generate filename with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"screenshot_{timestamp}.png"
+        # Generate filename
+        if name:
+            # Use custom name, ensure it has .png extension
+            if not name.endswith('.png'):
+                filename = f"{name}.png"
+            else:
+                filename = name
+        else:
+            # Use timestamp if no name provided
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"screenshot_{timestamp}.png"
         filepath = os.path.join(screenshots_dir, filename)
 
         # Build adb command
