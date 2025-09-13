@@ -1,6 +1,7 @@
 from typing import Any
 import subprocess
 import os
+import tempfile
 from datetime import datetime
 from mcp.server.fastmcp import FastMCP
 
@@ -87,16 +88,17 @@ async def list_emulators() -> dict:
 
 @mcp.tool()
 async def take_screenshot(device_id: str = None) -> dict:
-    """Take a screenshot and save it under /ss directory"""
+    """Take a screenshot for the specified device/emulator. If no device_id is provided, uses the default device."""
     try:
-        # Create /ss directory if it doesn't exist
-        ss_dir = "/ss"
-        os.makedirs(ss_dir, exist_ok=True)
+        # Use system temp directory for screenshots
+        ss_dir = tempfile.gettempdir()
+        screenshots_dir = os.path.join(ss_dir, "android_screenshots")
+        os.makedirs(screenshots_dir, exist_ok=True)
 
         # Generate filename with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"screenshot_{timestamp}.png"
-        filepath = os.path.join(ss_dir, filename)
+        filepath = os.path.join(screenshots_dir, filename)
 
         # Build adb command
         cmd = ['adb']
@@ -134,7 +136,7 @@ async def take_screenshot(device_id: str = None) -> dict:
     except PermissionError:
         return {
             "success": False,
-            "error": f"Permission denied: Cannot create directory or write to {ss_dir}",
+            "error": f"Permission denied: Cannot create directory or write to {screenshots_dir}",
             "filepath": None
         }
     except Exception as e:
