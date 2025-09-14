@@ -159,7 +159,7 @@ def get_ui_elements(device_id: str = None) -> list[ElementNode]:
         raise RuntimeError(f"Failed to get UI elements: {e}")
 
 
-def annotated_screenshot(device_id: str = None, scale: float = 0.7) -> Image.Image:
+def annotated_screenshot(device_id: str = None, scale: float = 0.7) -> tuple[Image.Image, list[ElementNode]]:
     """Take screenshot and annotate with UI elements"""
     try:
         # Get screenshot using adb (like the original function)
@@ -375,6 +375,27 @@ async def take_screenshot(device_id: str = None, name: str = None, annotate_elem
                 # Save only the annotated image
                 annotated_img.save(filepath, 'PNG')
 
+                # Convert UI elements to the same format as get_ui_elements_info
+                elements_info = []
+                for i, element in enumerate(ui_elements):
+                    elements_info.append({
+                        "index": i,
+                        "name": element.name,
+                        "center_coordinates": {
+                            "x": element.coordinates.x,
+                            "y": element.coordinates.y
+                        },
+                        "bounding_box": {
+                            "x1": element.bounding_box.x1,
+                            "y1": element.bounding_box.y1,
+                            "x2": element.bounding_box.x2,
+                            "y2": element.bounding_box.y2
+                        },
+                        "class_name": element.class_name,
+                        "clickable": element.clickable,
+                        "focusable": element.focusable
+                    })
+
                 return {
                     "success": True,
                     "message": f"Annotated screenshot saved successfully with {len(ui_elements)} UI elements",
@@ -382,6 +403,7 @@ async def take_screenshot(device_id: str = None, name: str = None, annotate_elem
                     "filename": filename,
                     "device_id": device_id or "default",
                     "ui_elements_count": len(ui_elements),
+                    "ui_elements": elements_info,
                     "annotated": True
                 }
             except Exception as e:
