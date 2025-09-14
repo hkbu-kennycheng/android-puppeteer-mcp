@@ -159,10 +159,10 @@ def get_ui_elements(device_id: str = None) -> list[ElementNode]:
         raise RuntimeError(f"Failed to get UI elements: {e}")
 
 
-def annotated_screenshot(device_id: str = None, scale: float = 0.7) -> tuple[Image.Image, list[ElementNode]]:
+def annotated_screenshot(device_id: str = None) -> tuple[Image.Image, list[ElementNode]]:
     """Take screenshot and annotate with UI elements"""
     try:
-        # Get screenshot using adb (like the original function)
+        # Get screenshot using adb
         cmd = ['adb']
         if device_id:
             cmd.extend(['-s', device_id])
@@ -171,22 +171,11 @@ def annotated_screenshot(device_id: str = None, scale: float = 0.7) -> tuple[Ima
         result = subprocess.run(cmd, capture_output=True, check=True)
         screenshot = Image.open(io.BytesIO(result.stdout))
 
-        # Scale screenshot if needed
-        if scale != 1.0:
-            new_size = (int(screenshot.width * scale), int(screenshot.height * scale))
-            screenshot = screenshot.resize(new_size, Image.Resampling.LANCZOS)
-
         # Get UI elements
         nodes = get_ui_elements(device_id)
 
-        # Add padding
-        padding = 15
-        width = screenshot.width + (2 * padding)
-        height = screenshot.height + (2 * padding)
-        padded_screenshot = Image.new("RGB", (width, height), color=(255, 255, 255))
-        padded_screenshot.paste(screenshot, (padding, padding))
-
-        draw = ImageDraw.Draw(padded_screenshot)
+        # Use original screenshot without padding
+        draw = ImageDraw.Draw(screenshot)
         font_size = 12
         try:
             font = ImageFont.truetype('arial.ttf', font_size)
@@ -203,12 +192,12 @@ def annotated_screenshot(device_id: str = None, scale: float = 0.7) -> tuple[Ima
             bounding_box = node.bounding_box
             color = get_random_color()
 
-            # Scale and pad the bounding box
+            # Use original coordinates without scaling or padding
             adjusted_box = (
-                int(bounding_box.x1 * scale) + padding,
-                int(bounding_box.y1 * scale) + padding,
-                int(bounding_box.x2 * scale) + padding,
-                int(bounding_box.y2 * scale) + padding
+                bounding_box.x1,
+                bounding_box.y1,
+                bounding_box.x2,
+                bounding_box.y2
             )
 
             # Draw bounding box
@@ -224,7 +213,7 @@ def annotated_screenshot(device_id: str = None, scale: float = 0.7) -> tuple[Ima
             # Label position above bounding box
             label_x1 = max(left, 0)
             label_y1 = max(top - label_height - 4, 0)
-            label_x2 = min(label_x1 + label_width + 4, width - 1)
+            label_x2 = min(label_x1 + label_width + 4, screenshot.width - 1)
             label_y2 = label_y1 + label_height + 4
 
             # Draw label background and text
@@ -235,7 +224,7 @@ def annotated_screenshot(device_id: str = None, scale: float = 0.7) -> tuple[Ima
         for i, node in enumerate(nodes):
             draw_annotation(i, node)
 
-        return padded_screenshot, nodes
+        return screenshot, nodes
 
     except Exception as e:
         raise RuntimeError(f"Failed to create annotated screenshot: {e}")
@@ -338,9 +327,9 @@ async def list_emulators() -> dict:
 
 
 @mcp.tool()
-async def take_screenshot(device_id: str = None, name: str = None, annotate_elements: bool = False) -> dict:
+async def take_screenshot(device_id: str = None, name: str = None, annotate_elements: bool = True) -> dict:
     """Take a screenshot for the specified device/emulator. If no device_id is provided, uses the default device.
-    Set annotate_elements=True to overlay UI element bounding boxes and labels."""
+    Set annotate_elements=False to take a plain screenshot without UI element annotations."""
     try:
         # Use android-puppeteer/ss directory for screenshots
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -366,13 +355,13 @@ async def take_screenshot(device_id: str = None, name: str = None, annotate_elem
             cmd.extend(['-s', device_id])
         cmd.extend(['exec-out', 'screencap', '-p'])
 
-        # Execute screenshot command or use annotated version
+        # Use annotated screenshot by default
         if annotate_elements:
             try:
                 # Use annotated screenshot with UI elements
-                annotated_img, ui_elements = annotated_screenshot(device_id, scale=1.0)
+                annotated_img, ui_elements = annotated_screenshot(device_id)
 
-                # Save only the annotated image
+                # Save the annotated image
                 annotated_img.save(filepath, 'PNG')
 
                 # Convert UI elements to the same format as get_ui_elements_info
@@ -410,85 +399,12 @@ async def take_screenshot(device_id: str = None, name: str = None, annotate_elem
                 # Fallback to regular screenshot if annotation fails
                 pass
 
+        # Take regular screenshot without annotations
         result = subprocess.run(cmd, capture_output=True, check=True)
 
-        # Create merged image with original and grid overlay
-        try:
-            # Open the screenshot with PIL
-            img = Image.open(io.BytesIO(result.stdout))
-            width, height = img.size
-
-            # Create a copy for grid overlay
-            grid_img = img.copy()
-            draw = ImageDraw.Draw(grid_img)
-
-            # Grid settings
-            grid_size = 200
-            grid_color = (255, 0, 0, 128)  # Semi-transparent red
-            text_color = (255, 255, 255)  # White text
-
-            # Try to use fonts for both grid and labels
-            try:
-                font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 32)
-                label_font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 48)
-            except (OSError, IOError):
-                font = ImageFont.load_default()
-                label_font = ImageFont.load_default()
-
-            # Draw vertical grid lines
-            for x in range(0, width + 1, grid_size):
-                if x <= width:
-                    draw.line([(x, 0), (x, height)], fill=grid_color, width=1)
-
-            # Draw horizontal grid lines
-            for y in range(0, height + 1, grid_size):
-                if y <= height:
-                    draw.line([(0, y), (width, y)], fill=grid_color, width=1)
-
-            # Draw coordinates at all grid intersections
-            for x in range(0, width + 1, grid_size):
-                for y in range(0, height + 1, grid_size):
-                    if x <= width and y <= height:
-                        coord_text = f"({x},{y})"
-                        bbox = draw.textbbox((0, 0), coord_text, font=font)
-                        text_width = bbox[2] - bbox[0]
-                        text_height = bbox[3] - bbox[1]
-
-                        # Position text to avoid going off screen
-                        text_x = min(x + 2, width - text_width - 2)
-                        text_y = min(y + 2, height - text_height - 2)
-
-                        # Draw text with semi-transparent background for visibility
-                        draw.rectangle([text_x - 1, text_y - 1, text_x + text_width + 1, text_y + text_height + 1],
-                                     fill=(0, 0, 0, 180))
-                        draw.text((text_x, text_y), coord_text, fill=text_color, font=font)
-
-            # Create merged image with labels
-            label_height = 60  # Space for labels above images
-            merged_width = width * 2 + 20  # Two images with small gap
-            merged_height = height + label_height
-
-            # Create merged image with white background
-            merged_img = Image.new('RGB', (merged_width, merged_height), color=(255, 255, 255))
-            merged_draw = ImageDraw.Draw(merged_img)
-
-            # Add labels
-            merged_draw.text((width // 2 - 50, 10), "Original", fill=(0, 0, 0), font=label_font)
-            merged_draw.text((width + 10 + width // 2 - 80, 10), "Coordinates", fill=(0, 0, 0), font=label_font)
-
-            # Paste original image on the left
-            merged_img.paste(img, (0, label_height))
-
-            # Paste grid image on the right
-            merged_img.paste(grid_img, (width + 20, label_height))
-
-            # Save only the merged image
-            merged_img.save(filepath, 'PNG')
-
-        except Exception as e:
-            # If merged creation fails, save original screenshot as fallback
-            with open(filepath, 'wb') as f:
-                f.write(result.stdout)
+        # Save the plain screenshot
+        with open(filepath, 'wb') as f:
+            f.write(result.stdout)
 
         return {
             "success": True,
@@ -674,6 +590,47 @@ async def get_device_dimensions(device_id: str = None) -> dict:
             "success": False,
             "error": f"Unexpected error: {e}",
             "device_id": device_id or "default"
+        }
+
+
+@mcp.tool()
+async def press_back(device_id: str = None) -> dict:
+    """Press the hardware back button on the Android device/emulator."""
+    try:
+        # Build adb command for back button press
+        cmd = ['adb']
+        if device_id:
+            cmd.extend(['-s', device_id])
+        cmd.extend(['shell', 'input', 'keyevent', 'KEYCODE_BACK'])
+
+        # Execute back button press command
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        return {
+            "success": True,
+            "message": "Successfully pressed hardware back button",
+            "action_type": "back_press",
+            "device_id": device_id or "default"
+        }
+
+    except subprocess.CalledProcessError as e:
+        return {
+            "success": False,
+            "error": f"Failed to press back button: {e}",
+            "stderr": e.stderr if e.stderr else "",
+            "action_type": "back_press"
+        }
+    except FileNotFoundError:
+        return {
+            "success": False,
+            "error": "ADB not found. Please ensure Android SDK is installed and adb is in PATH.",
+            "action_type": "back_press"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Unexpected error: {e}",
+            "action_type": "back_press"
         }
 
 
