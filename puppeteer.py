@@ -138,14 +138,7 @@ async def take_screenshot(device_id: str = None, name: str = None) -> dict:
         # Execute screenshot command
         result = subprocess.run(cmd, capture_output=True, check=True)
 
-        # Save original screenshot to file
-        with open(filepath, 'wb') as f:
-            f.write(result.stdout)
-
-        # Create grid overlay version
-        grid_filename = filename.replace('.png', '_grid.png')
-        grid_filepath = os.path.join(screenshots_dir, grid_filename)
-
+        # Create merged image with original and grid overlay
         try:
             # Open the screenshot with PIL
             img = Image.open(io.BytesIO(result.stdout))
@@ -156,15 +149,17 @@ async def take_screenshot(device_id: str = None, name: str = None) -> dict:
             draw = ImageDraw.Draw(grid_img)
 
             # Grid settings
-            grid_size = 160
+            grid_size = 200
             grid_color = (255, 0, 0, 128)  # Semi-transparent red
             text_color = (255, 255, 255)  # White text
 
-            # Try to use a default font, fallback to default if not available
+            # Try to use fonts for both grid and labels
             try:
                 font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 32)
+                label_font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 48)
             except (OSError, IOError):
                 font = ImageFont.load_default()
+                label_font = ImageFont.load_default()
 
             # Draw vertical grid lines
             for x in range(0, width + 1, grid_size):
@@ -194,21 +189,38 @@ async def take_screenshot(device_id: str = None, name: str = None) -> dict:
                                      fill=(0, 0, 0, 180))
                         draw.text((text_x, text_y), coord_text, fill=text_color, font=font)
 
-            # Save grid version
-            grid_img.save(grid_filepath, 'PNG')
+            # Create merged image with labels
+            label_height = 60  # Space for labels above images
+            merged_width = width * 2 + 20  # Two images with small gap
+            merged_height = height + label_height
+
+            # Create merged image with white background
+            merged_img = Image.new('RGB', (merged_width, merged_height), color=(255, 255, 255))
+            merged_draw = ImageDraw.Draw(merged_img)
+
+            # Add labels
+            merged_draw.text((width // 2 - 50, 10), "Original", fill=(0, 0, 0), font=label_font)
+            merged_draw.text((width + 10 + width // 2 - 80, 10), "Coordinates", fill=(0, 0, 0), font=label_font)
+
+            # Paste original image on the left
+            merged_img.paste(img, (0, label_height))
+
+            # Paste grid image on the right
+            merged_img.paste(grid_img, (width + 20, label_height))
+
+            # Save only the merged image
+            merged_img.save(filepath, 'PNG')
 
         except Exception as e:
-            # If grid creation fails, still return success for original screenshot
-            grid_filepath = None
-            grid_filename = None
+            # If merged creation fails, save original screenshot as fallback
+            with open(filepath, 'wb') as f:
+                f.write(result.stdout)
 
         return {
             "success": True,
             "message": f"Screenshot saved successfully",
             "filepath": filepath,
             "filename": filename,
-            "grid_filepath": grid_filepath,
-            "grid_filename": grid_filename,
             "device_id": device_id or "default"
         }
 
