@@ -441,7 +441,7 @@ async def take_screenshot(device_id: str = None, name: str = None, annotate_elem
 
 
 @mcp.tool()
-async def tap(x: int, y: int, device_id: str = None, duration: int = None) -> dict:
+async def press(x: int, y: int, device_id: str = None, duration: int = None) -> dict:
     """Tap on specific coordinates on the Android screen. Use duration for long press (in milliseconds)."""
     try:
         # Validate coordinates
@@ -491,6 +491,55 @@ async def tap(x: int, y: int, device_id: str = None, duration: int = None) -> di
         return {
             "success": False,
             "error": "ADB not found. Please ensure Android SDK is installed and adb is in PATH.",
+            "x": x,
+            "y": y
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Unexpected error: {e}",
+            "x": x,
+            "y": y
+        }
+
+
+@mcp.tool()
+async def long_press(x: int, y: int, device_id: str = None) -> dict:
+    """Long press on specific coordinates on the Android screen."""
+    try:
+        # Validate coordinates
+        if x < 0 or y < 0:
+            return {
+                "success": False,
+                "error": "Coordinates must be positive integers",
+                "x": x,
+                "y": y
+            }
+
+        # Get device connection
+        device = get_device_connection(device_id)
+
+        # Execute long press using gesture with 1.5 second duration
+        # Long press with gesture: [ (x, y, delay_ms) ]
+        device.gesture(
+            (x, y, 0),     # touch down immediately
+            (x, y, 1500)   # stay at same position for 1500 ms (1.5 seconds)
+        )
+
+        return {
+            "success": True,
+            "message": f"Successfully executed long press at coordinates ({x}, {y}) for 1.5 seconds",
+            "x": x,
+            "y": y,
+            "duration_ms": 1500,
+            "action_type": "long_press",
+            "device_id": device_id or "default"
+        }
+
+    except ConnectionError as e:
+        return {
+            "success": False,
+            "error": f"Device connection failed: {e}",
             "x": x,
             "y": y
         }
