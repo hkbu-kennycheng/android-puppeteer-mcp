@@ -634,6 +634,65 @@ async def press_back(device_id: str = None) -> dict:
         }
 
 
+@mcp.tool()
+async def type_text(text: str, device_id: str = None, clear_first: bool = False) -> dict:
+    """Type text into the currently focused input field on the Android device/emulator.
+
+    Args:
+        text: The text to type into the input field
+        device_id: Optional device ID to target specific device/emulator
+        clear_first: If True, clears existing text before typing new text
+    """
+    try:
+        if not text:
+            return {
+                "success": False,
+                "error": "Text parameter cannot be empty",
+                "text": text
+            }
+
+        # Get device connection for uiautomator2
+        device = get_device_connection(device_id)
+
+        # Enable fast input IME for reliable text input
+        device.set_fastinput_ime(enable=True)
+
+        # Use uiautomator2's send_keys method which is much more reliable
+        device.send_keys(text=text, clear=clear_first)
+
+        return {
+            "success": True,
+            "message": f"Successfully typed text into input field",
+            "text": text,
+            "cleared_first": clear_first,
+            "action_type": "type_text",
+            "device_id": device_id or "default"
+        }
+
+    except subprocess.CalledProcessError as e:
+        return {
+            "success": False,
+            "error": f"Failed to type text: {e}",
+            "stderr": e.stderr if e.stderr else "",
+            "text": text,
+            "action_type": "type_text"
+        }
+    except FileNotFoundError:
+        return {
+            "success": False,
+            "error": "ADB not found. Please ensure Android SDK is installed and adb is in PATH.",
+            "text": text,
+            "action_type": "type_text"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Unexpected error: {e}",
+            "text": text,
+            "action_type": "type_text"
+        }
+
+
 if __name__ == "__main__":
     # Initialize and run the server
     mcp.run(transport='stdio')
