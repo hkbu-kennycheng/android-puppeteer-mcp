@@ -824,6 +824,191 @@ async def type_text(text: str, device_id: str = None, clear_first: bool = False)
         }
 
 
+@mcp.tool()
+async def scroll_element(element, direction: str, distance: int = 200, duration: int = 300, device_id: str = None) -> dict:
+    """Scroll a specific UI element in the given direction for a specified distance.
+
+    Args:
+        element: Either an integer (element index from annotated screenshot) or string (element name)
+        direction: Direction to scroll - 'up', 'down', 'left', 'right'
+        distance: Distance to scroll in pixels (default: 200)
+        duration: Duration of scroll gesture in milliseconds (default: 300)
+        device_id: Optional device ID to target specific device/emulator
+    """
+    try:
+        # Validate direction parameter
+        direction = direction.lower()
+        if direction not in ['up', 'down', 'left', 'right']:
+            return {
+                "success": False,
+                "error": f'Invalid direction: {direction}. Use "up", "down", "left", or "right"',
+                "element": element
+            }
+
+        # Validate distance parameter
+        if distance <= 0:
+            return {
+                "success": False,
+                "error": "Distance must be a positive integer",
+                "element": element,
+                "distance": distance
+            }
+
+        # Get UI elements
+        elements = get_ui_elements(device_id)
+
+        if not elements:
+            return {
+                "success": False,
+                "error": "No UI elements found on screen",
+                "element": element
+            }
+
+        # Find target element by index or name
+        target_element = None
+        if isinstance(element, int):
+            # Find by index
+            if 0 <= element < len(elements):
+                target_element = elements[element]
+            else:
+                return {
+                    "success": False,
+                    "error": f"Element index {element} is out of range (0-{len(elements)-1})",
+                    "element": element,
+                    "available_count": len(elements)
+                }
+        else:
+            # Find by name
+            element_str = str(element)
+            for elem in elements:
+                if elem.name == element_str:
+                    target_element = elem
+                    break
+
+            if not target_element:
+                return {
+                    "success": False,
+                    "error": f"Element with name '{element_str}' not found",
+                    "element": element,
+                    "available_elements": [elem.name for elem in elements[:10]]  # Show first 10 for reference
+                }
+
+        # Check if element is likely scrollable
+        scrollable_classes = [
+            "android.widget.ScrollView",
+            "android.widget.HorizontalScrollView",
+            "android.support.v7.widget.RecyclerView",
+            "androidx.recyclerview.widget.RecyclerView",
+            "android.widget.ListView",
+            "android.widget.GridView",
+            "androidx.viewpager.widget.ViewPager",
+            "androidx.viewpager2.widget.ViewPager2"
+        ]
+
+        is_scrollable = target_element.class_name in scrollable_classes
+
+        # Get element bounds
+        bbox = target_element.bounding_box
+        element_width = bbox.x2 - bbox.x1
+        element_height = bbox.y2 - bbox.y1
+
+        # Calculate center point of the element
+        center_x = bbox.x1 + element_width // 2
+        center_y = bbox.y1 + element_height // 2
+
+        # Calculate scroll coordinates within element boundaries with margins
+        margin = 20  # Keep scroll gesture away from element edges
+
+        if direction == 'up':
+            # Scroll up: start lower in element, end higher
+            start_y = min(center_y + distance // 2, bbox.y2 - margin)
+            end_y = max(center_y - distance // 2, bbox.y1 + margin)
+            start_x = end_x = center_x
+        elif direction == 'down':
+            # Scroll down: start higher in element, end lower
+            start_y = max(center_y - distance // 2, bbox.y1 + margin)
+            end_y = min(center_y + distance // 2, bbox.y2 - margin)
+            start_x = end_x = center_x
+        elif direction == 'left':
+            # Scroll left: start right in element, end left
+            start_x = min(center_x + distance // 2, bbox.x2 - margin)
+            end_x = max(center_x - distance // 2, bbox.x1 + margin)
+            start_y = end_y = center_y
+        else:  # right
+            # Scroll right: start left in element, end right
+            start_x = max(center_x - distance // 2, bbox.x1 + margin)
+            end_x = min(center_x + distance // 2, bbox.x2 - margin)
+            start_y = end_y = center_y
+
+        # Ensure coordinates are within element bounds
+        start_x = max(bbox.x1 + margin, min(start_x, bbox.x2 - margin))
+        end_x = max(bbox.x1 + margin, min(end_x, bbox.x2 - margin))
+        start_y = max(bbox.y1 + margin, min(start_y, bbox.y2 - margin))
+        end_y = max(bbox.y1 + margin, min(end_y, bbox.y2 - margin))
+
+        # Build adb swipe command to perform scroll gesture
+        cmd = ['adb']
+        if device_id:
+            cmd.extend(['-s', device_id])
+        cmd.extend(['shell', 'input', 'swipe', str(start_x), str(start_y), str(end_x), str(end_y), str(duration)])
+
+        # Execute scroll command
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        return {
+            "success": True,
+            "message": f"Successfully scrolled element '{target_element.name}' {direction} for {distance} pixels in {duration}ms",
+            "element": {
+                "name": target_element.name,
+                "class_name": target_element.class_name,
+                "bounding_box": {
+                    "x1": bbox.x1, "y1": bbox.y1,
+                    "x2": bbox.x2, "y2": bbox.y2
+                }
+            },
+            "scroll_coordinates": {
+                "start": {"x": start_x, "y": start_y},
+                "end": {"x": end_x, "y": end_y}
+            },
+            "direction": direction,
+            "distance": distance,
+            "duration": duration,
+            "is_scrollable_element": is_scrollable,
+            "action_type": f"element_scroll_{direction}",
+            "device_id": device_id or "default"
+        }
+
+    except ConnectionError as e:
+        return {
+            "success": False,
+            "error": f"Device connection failed: {e}",
+            "element": element,
+            "action_type": "element_scroll"
+        }
+    except subprocess.CalledProcessError as e:
+        return {
+            "success": False,
+            "error": f"Failed to execute scroll: {e}",
+            "stderr": e.stderr if e.stderr else "",
+            "element": element,
+            "action_type": "element_scroll"
+        }
+    except FileNotFoundError:
+        return {
+            "success": False,
+            "error": "ADB not found. Please ensure Android SDK is installed and adb is in PATH.",
+            "element": element,
+            "action_type": "element_scroll"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Unexpected error: {e}",
+            "element": element,
+            "action_type": "element_scroll"
+        }
+
+
 if __name__ == "__main__":
     # Initialize and run the server
     mcp.run(transport='stdio')
