@@ -3,12 +3,242 @@ import subprocess
 import os
 import tempfile
 from datetime import datetime
+from dataclasses import dataclass
 from mcp.server.fastmcp import FastMCP
 from PIL import Image, ImageDraw, ImageFont
 import io
+import uiautomator2 as u2
+from xml.etree import ElementTree
+import re
+import random
 
 # Initialize FastMCP server
 mcp = FastMCP("android-puppeteer", "Puppeteer for Android")
+
+
+# Element detection classes
+@dataclass
+class BoundingBox:
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+
+    def to_string(self):
+        return f'[{self.x1},{self.y1}][{self.x2},{self.y2}]'
+
+
+@dataclass
+class CenterCord:
+    x: int
+    y: int
+
+    def to_string(self):
+        return f'({self.x},{self.y})'
+
+
+@dataclass
+class ElementNode:
+    name: str
+    coordinates: CenterCord
+    bounding_box: BoundingBox
+    class_name: str = ""
+    clickable: bool = False
+    focusable: bool = False
+
+
+# Interactive element classes (common Android UI elements)
+INTERACTIVE_CLASSES = [
+    "android.widget.Button",
+    "android.widget.ImageButton",
+    "android.widget.EditText",
+    "android.widget.CheckBox",
+    "android.widget.RadioButton",
+    "android.widget.Switch",
+    "android.widget.ToggleButton",
+    "android.widget.Spinner",
+    "android.widget.SeekBar",
+    "android.widget.RatingBar",
+    "android.widget.TabHost",
+    "android.widget.NumberPicker",
+    "android.support.v7.widget.RecyclerView",
+    "androidx.recyclerview.widget.RecyclerView",
+    "android.widget.ListView",
+    "android.widget.GridView",
+    "android.widget.ScrollView",
+    "android.widget.HorizontalScrollView",
+    "androidx.viewpager.widget.ViewPager",
+    "androidx.viewpager2.widget.ViewPager2"
+]
+
+
+# Utility functions
+def extract_coordinates(node):
+    """Extract coordinates from Android UI hierarchy node bounds attribute"""
+    attributes = node.attrib
+    bounds = attributes.get('bounds')
+    match = re.search(r'\[(\d+),(\d+)]\[(\d+),(\d+)]', bounds)
+    if match:
+        x1, y1, x2, y2 = map(int, match.groups())
+        return x1, y1, x2, y2
+    return None
+
+
+def get_center_coordinates(coordinates: tuple[int, int, int, int]):
+    """Calculate center coordinates from bounding box"""
+    x_center, y_center = (coordinates[0] + coordinates[2]) // 2, (coordinates[1] + coordinates[3]) // 2
+    return x_center, y_center
+
+
+def get_element_name(node) -> str:
+    """Get a human-readable name for the UI element"""
+    # Try to get text content first, then content description
+    name = "".join([n.get('text') or n.get('content-desc') for n in node if n.get('class') == "android.widget.TextView"]) or node.get('content-desc') or node.get('text')
+    return name if name else f"{node.get('class', 'Unknown').split('.')[-1]}"
+
+
+def is_interactive(node) -> bool:
+    """Check if a UI element is interactive"""
+    attributes = node.attrib
+    return (attributes.get('focusable') == "true" or
+            attributes.get('clickable') == "true" or
+            attributes.get('class') in INTERACTIVE_CLASSES)
+
+
+def get_device_connection(device_id: str = None):
+    """Get uiautomator2 device connection"""
+    try:
+        if device_id:
+            device = u2.connect(device_id)
+        else:
+            device = u2.connect()  # Connect to default device
+        # Test connection
+        device.info
+        return device
+    except Exception as e:
+        raise ConnectionError(f"Failed to connect to device {device_id}: {e}")
+
+
+def get_ui_elements(device_id: str = None) -> list[ElementNode]:
+    """Get interactive UI elements from the device"""
+    try:
+        device = get_device_connection(device_id)
+
+        # Get UI hierarchy XML
+        tree_string = device.dump_hierarchy()
+        element_tree = ElementTree.fromstring(tree_string)
+
+        interactive_elements = []
+        nodes = element_tree.findall('.//node[@visible-to-user="true"][@enabled="true"]')
+
+        for node in nodes:
+            if is_interactive(node):
+                coords = extract_coordinates(node)
+                if not coords:
+                    continue
+
+                x1, y1, x2, y2 = coords
+                name = get_element_name(node)
+
+                if not name:
+                    continue
+
+                x_center, y_center = get_center_coordinates((x1, y1, x2, y2))
+
+                interactive_elements.append(ElementNode(
+                    name=name,
+                    coordinates=CenterCord(x=x_center, y=y_center),
+                    bounding_box=BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2),
+                    class_name=node.get('class', ''),
+                    clickable=node.get('clickable') == 'true',
+                    focusable=node.get('focusable') == 'true'
+                ))
+
+        return interactive_elements
+    except Exception as e:
+        raise RuntimeError(f"Failed to get UI elements: {e}")
+
+
+def annotated_screenshot(device_id: str = None, scale: float = 0.7) -> Image.Image:
+    """Take screenshot and annotate with UI elements"""
+    try:
+        # Get screenshot using adb (like the original function)
+        cmd = ['adb']
+        if device_id:
+            cmd.extend(['-s', device_id])
+        cmd.extend(['exec-out', 'screencap', '-p'])
+
+        result = subprocess.run(cmd, capture_output=True, check=True)
+        screenshot = Image.open(io.BytesIO(result.stdout))
+
+        # Scale screenshot if needed
+        if scale != 1.0:
+            new_size = (int(screenshot.width * scale), int(screenshot.height * scale))
+            screenshot = screenshot.resize(new_size, Image.Resampling.LANCZOS)
+
+        # Get UI elements
+        nodes = get_ui_elements(device_id)
+
+        # Add padding
+        padding = 15
+        width = screenshot.width + (2 * padding)
+        height = screenshot.height + (2 * padding)
+        padded_screenshot = Image.new("RGB", (width, height), color=(255, 255, 255))
+        padded_screenshot.paste(screenshot, (padding, padding))
+
+        draw = ImageDraw.Draw(padded_screenshot)
+        font_size = 12
+        try:
+            font = ImageFont.truetype('arial.ttf', font_size)
+        except (OSError, IOError):
+            try:
+                font = ImageFont.truetype('/System/Library/Fonts/Arial.ttf', font_size)
+            except (OSError, IOError):
+                font = ImageFont.load_default()
+
+        def get_random_color():
+            return "#{:06x}".format(random.randint(0, 0xFFFFFF))
+
+        def draw_annotation(label, node: ElementNode):
+            bounding_box = node.bounding_box
+            color = get_random_color()
+
+            # Scale and pad the bounding box
+            adjusted_box = (
+                int(bounding_box.x1 * scale) + padding,
+                int(bounding_box.y1 * scale) + padding,
+                int(bounding_box.x2 * scale) + padding,
+                int(bounding_box.y2 * scale) + padding
+            )
+
+            # Draw bounding box
+            draw.rectangle(adjusted_box, outline=color, width=2)
+
+            # Label dimensions
+            label_text = f"{label}: {node.name}"
+            bbox = draw.textbbox((0, 0), label_text, font=font)
+            label_width = bbox[2] - bbox[0]
+            label_height = bbox[3] - bbox[1]
+            left, top, _, _ = adjusted_box
+
+            # Label position above bounding box
+            label_x1 = max(left, 0)
+            label_y1 = max(top - label_height - 4, 0)
+            label_x2 = min(label_x1 + label_width + 4, width - 1)
+            label_y2 = label_y1 + label_height + 4
+
+            # Draw label background and text
+            draw.rectangle([(label_x1, label_y1), (label_x2, label_y2)], fill=color)
+            draw.text((label_x1 + 2, label_y1 + 2), label_text, fill=(255, 255, 255), font=font)
+
+        # Draw annotations sequentially
+        for i, node in enumerate(nodes):
+            draw_annotation(i, node)
+
+        return padded_screenshot, nodes
+
+    except Exception as e:
+        raise RuntimeError(f"Failed to create annotated screenshot: {e}")
 
 
 @mcp.tool()
@@ -108,8 +338,9 @@ async def list_emulators() -> dict:
 
 
 @mcp.tool()
-async def take_screenshot(device_id: str = None, name: str = None) -> dict:
-    """Take a screenshot for the specified device/emulator. If no device_id is provided, uses the default device."""
+async def take_screenshot(device_id: str = None, name: str = None, annotate_elements: bool = False) -> dict:
+    """Take a screenshot for the specified device/emulator. If no device_id is provided, uses the default device.
+    Set annotate_elements=True to overlay UI element bounding boxes and labels."""
     try:
         # Use android-puppeteer/ss directory for screenshots
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -135,7 +366,28 @@ async def take_screenshot(device_id: str = None, name: str = None) -> dict:
             cmd.extend(['-s', device_id])
         cmd.extend(['exec-out', 'screencap', '-p'])
 
-        # Execute screenshot command
+        # Execute screenshot command or use annotated version
+        if annotate_elements:
+            try:
+                # Use annotated screenshot with UI elements
+                annotated_img, ui_elements = annotated_screenshot(device_id, scale=1.0)
+
+                # Save only the annotated image
+                annotated_img.save(filepath, 'PNG')
+
+                return {
+                    "success": True,
+                    "message": f"Annotated screenshot saved successfully with {len(ui_elements)} UI elements",
+                    "filepath": filepath,
+                    "filename": filename,
+                    "device_id": device_id or "default",
+                    "ui_elements_count": len(ui_elements),
+                    "annotated": True
+                }
+            except Exception as e:
+                # Fallback to regular screenshot if annotation fails
+                pass
+
         result = subprocess.run(cmd, capture_output=True, check=True)
 
         # Create merged image with original and grid overlay
@@ -313,6 +565,94 @@ async def tap(x: int, y: int, device_id: str = None, duration: int = None) -> di
         }
 
 
+@mcp.tool()
+async def get_ui_elements_info(device_id: str = None) -> dict:
+    """Get detailed information about all interactive UI elements on the screen including their coordinates and properties."""
+    try:
+        elements = get_ui_elements(device_id)
+
+        elements_info = []
+        for i, element in enumerate(elements):
+            elements_info.append({
+                "index": i,
+                "name": element.name,
+                "center_coordinates": {
+                    "x": element.coordinates.x,
+                    "y": element.coordinates.y
+                },
+                "bounding_box": {
+                    "x1": element.bounding_box.x1,
+                    "y1": element.bounding_box.y1,
+                    "x2": element.bounding_box.x2,
+                    "y2": element.bounding_box.y2
+                },
+                "class_name": element.class_name,
+                "clickable": element.clickable,
+                "focusable": element.focusable
+            })
+
+        return {
+            "success": True,
+            "message": f"Found {len(elements)} interactive UI elements",
+            "device_id": device_id or "default",
+            "elements": elements_info,
+            "count": len(elements)
+        }
+
+    except ConnectionError as e:
+        return {
+            "success": False,
+            "error": f"Device connection failed: {e}",
+            "elements": [],
+            "count": 0
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to get UI elements: {e}",
+            "elements": [],
+            "count": 0
+        }
+
+
+@mcp.tool()
+async def get_device_dimensions(device_id: str = None) -> dict:
+    """Get the dimensions of the Android device/emulator screen."""
+    try:
+        # Get device dimensions using adb
+        cmd = ['adb']
+        if device_id:
+            cmd.extend(['-s', device_id])
+        cmd.extend(['shell', 'wm', 'size'])
+
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        output = result.stdout.strip()
+
+        width, height = None, None
+        if 'Physical size:' in output:
+            size_part = output.split('Physical size:')[1].strip()
+            width, height = map(int, size_part.split('x'))
+
+        return {
+            "success": True,
+            "device_id": device_id or "default",
+            "width": width,
+            "height": height,
+            "dimensions": f"{width}x{height}" if width and height else None
+        }
+
+    except subprocess.CalledProcessError as e:
+        return {
+            "success": False,
+            "error": f"Failed to get device dimensions: {e}",
+            "device_id": device_id or "default"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Unexpected error: {e}",
+            "device_id": device_id or "default"
+        }
 
 
 if __name__ == "__main__":
