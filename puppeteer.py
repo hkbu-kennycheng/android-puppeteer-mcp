@@ -11,9 +11,14 @@ import uiautomator2 as u2
 from xml.etree import ElementTree
 import re
 import random
+import signal
+import threading
 
 # Initialize FastMCP server
 mcp = FastMCP("android-puppeteer", "Puppeteer for Android")
+
+# Global dictionary to track active video recordings
+active_recordings = {}
 
 
 # Element detection classes
@@ -1055,6 +1060,208 @@ async def scroll_element(element, direction: str, distance: int = 200, duration:
             "error": f"Unexpected error: {e}",
             "element": element,
             "action_type": "element_scroll"
+        }
+
+
+@mcp.tool()
+async def record_video(device_id: str = None, filename: str = None, resolution: str = None, bitrate: str = "8M") -> dict:
+    """Start recording a video using scrcpy. The video will be saved to the videos directory."""
+    try:
+        # Use android-puppeteer/videos directory for video recordings
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        videos_dir = os.path.join(current_dir, "videos")
+        os.makedirs(videos_dir, exist_ok=True)
+
+        # Generate filename if not provided
+        if filename:
+            # Ensure it has .mp4 extension
+            if not filename.endswith('.mp4'):
+                filename = f"{filename}.mp4"
+        else:
+            # Use timestamp if no filename provided
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"recording_{timestamp}.mp4"
+
+        filepath = os.path.join(videos_dir, filename)
+
+        # Create recording key for tracking
+        recording_key = device_id or "default"
+
+        # Check if already recording for this device
+        if recording_key in active_recordings:
+            return {
+                "success": False,
+                "error": f"Already recording for device {recording_key}. Stop the current recording first.",
+                "device_id": device_id or "default"
+            }
+
+        # Build scrcpy command for recording
+        cmd = ['scrcpy']
+
+        # Add device selection if specified
+        if device_id:
+            cmd.extend(['-s', device_id])
+
+        # Add recording parameters
+        cmd.extend(['--record', filepath])
+
+        # Add video quality parameters
+        cmd.extend(['--video-bit-rate', bitrate])
+
+        if resolution:
+            cmd.extend(['--max-size', resolution])
+
+        # Add minimal parameters for recording
+        cmd.extend([
+            '--no-playback'  # Don't show the device screen (updated flag for scrcpy v3.2+)
+        ])
+
+        # Start the recording process
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            preexec_fn=os.setsid  # Create new process group for proper termination
+        )
+
+        # Give the process a moment to start and check if it's still running
+        import time
+        time.sleep(1)
+
+        # Check if process started successfully
+        if process.poll() is not None:
+            # Process terminated immediately, capture error output
+            stderr_output = process.stderr.read().decode() if process.stderr else ""
+            stdout_output = process.stdout.read().decode() if process.stdout else ""
+            return {
+                "success": False,
+                "error": f"scrcpy process terminated immediately. stderr: {stderr_output}, stdout: {stdout_output}",
+                "filepath": None,
+                "command": ' '.join(cmd)
+            }
+
+        # Store the process for later termination
+        active_recordings[recording_key] = {
+            "process": process,
+            "filepath": filepath,
+            "filename": filename,
+            "start_time": datetime.now(),
+            "device_id": device_id or "default"
+        }
+
+        return {
+            "success": True,
+            "message": f"Video recording started successfully",
+            "filepath": filepath,
+            "filename": filename,
+            "device_id": device_id or "default",
+            "recording_key": recording_key,
+            "bitrate": bitrate,
+            "resolution": resolution,
+            "process_id": process.pid
+        }
+
+    except FileNotFoundError:
+        return {
+            "success": False,
+            "error": "scrcpy not found. Please ensure scrcpy is installed and in PATH.",
+            "filepath": None
+        }
+    except PermissionError:
+        return {
+            "success": False,
+            "error": f"Permission denied: Cannot create directory or write to {videos_dir}",
+            "filepath": None
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Unexpected error starting recording: {e}",
+            "filepath": None
+        }
+
+
+@mcp.tool()
+async def stop_video(device_id: str = None) -> dict:
+    """Stop the active video recording for the specified device."""
+    try:
+        recording_key = device_id or "default"
+
+        if recording_key not in active_recordings:
+            return {
+                "success": False,
+                "error": f"No active recording found for device {recording_key}",
+                "device_id": device_id or "default"
+            }
+
+        recording_info = active_recordings[recording_key]
+        process = recording_info["process"]
+        filepath = recording_info["filepath"]
+        filename = recording_info["filename"]
+        start_time = recording_info["start_time"]
+
+        # Check if process is still running
+        if process.poll() is not None:
+            # Process already terminated
+            del active_recordings[recording_key]
+            return {
+                "success": False,
+                "error": "Recording process has already terminated",
+                "filepath": filepath,
+                "filename": filename
+            }
+
+        # Gracefully terminate the scrcpy process
+        try:
+            # Send SIGTERM to the process group
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+
+            # Wait for the process to terminate (with timeout)
+            process.wait(timeout=10)
+
+        except subprocess.TimeoutExpired:
+            # If it doesn't terminate gracefully, force kill
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            process.wait()
+        except ProcessLookupError:
+            # Process already terminated
+            pass
+
+        # Remove from active recordings
+        del active_recordings[recording_key]
+
+        # Calculate recording duration
+        end_time = datetime.now()
+        duration = end_time - start_time
+        duration_seconds = duration.total_seconds()
+
+        # Check if file exists and get size
+        file_size = None
+        file_exists = os.path.exists(filepath)
+        if file_exists:
+            file_size = os.path.getsize(filepath)
+
+        return {
+            "success": True,
+            "message": f"Video recording stopped successfully",
+            "filepath": filepath if file_exists else None,
+            "filename": filename,
+            "device_id": device_id or "default",
+            "duration_seconds": duration_seconds,
+            "file_size_bytes": file_size,
+            "file_exists": file_exists
+        }
+
+    except Exception as e:
+        # Clean up the recording entry even if there was an error
+        recording_key = device_id or "default"
+        if recording_key in active_recordings:
+            del active_recordings[recording_key]
+
+        return {
+            "success": False,
+            "error": f"Error stopping recording: {e}",
+            "device_id": device_id or "default"
         }
 
 
