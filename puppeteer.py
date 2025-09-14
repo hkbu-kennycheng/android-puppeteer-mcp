@@ -635,6 +635,137 @@ async def press_back(device_id: str = None) -> dict:
 
 
 @mcp.tool()
+async def swipe(direction: str = None, x1: int = None, y1: int = None, x2: int = None, y2: int = None,
+               device_id: str = None, distance: int = None, duration: int = 300) -> dict:
+    """Swipe horizontally or vertically on the Android screen.
+
+    Args:
+        direction: 'left', 'right', 'up', 'down' for directional swipes
+        x1, y1, x2, y2: Exact coordinates for custom swipes
+        device_id: Optional device ID to target specific device/emulator
+        distance: Distance of swipe in pixels (default: 50% of screen dimension)
+        duration: Duration of swipe in milliseconds (default: 300ms)
+    """
+    try:
+        # Validate input parameters
+        if direction and (x1 is not None or y1 is not None or x2 is not None or y2 is not None):
+            return {
+                "success": False,
+                "error": "Please provide either direction OR coordinates, not both"
+            }
+
+        if not direction and not all(coord is not None for coord in [x1, y1, x2, y2]):
+            return {
+                "success": False,
+                "error": "Please provide either a direction ('left', 'right', 'up', 'down') or exact coordinates (x1, y1, x2, y2)"
+            }
+
+        if direction:
+            # Get device dimensions for direction-based swipes
+            dimensions = await get_device_dimensions(device_id)
+            if not dimensions["success"]:
+                return {
+                    "success": False,
+                    "error": f"Failed to get device dimensions: {dimensions['error']}"
+                }
+
+            screen_width = dimensions["width"]
+            screen_height = dimensions["height"]
+
+            if not screen_width or not screen_height:
+                return {
+                    "success": False,
+                    "error": "Could not determine screen dimensions"
+                }
+
+            # Default distance is 50% of relevant screen dimension
+            if distance is None:
+                distance = min(screen_width, screen_height) // 2
+
+            # Calculate swipe coordinates based on direction
+            center_x = screen_width // 2
+            center_y = screen_height // 2
+
+            direction = direction.lower()
+            if direction == 'left':
+                x1, y1 = center_x + distance // 2, center_y
+                x2, y2 = center_x - distance // 2, center_y
+            elif direction == 'right':
+                x1, y1 = center_x - distance // 2, center_y
+                x2, y2 = center_x + distance // 2, center_y
+            elif direction == 'up':
+                x1, y1 = center_x, center_y + distance // 2
+                x2, y2 = center_x, center_y - distance // 2
+            elif direction == 'down':
+                x1, y1 = center_x, center_y - distance // 2
+                x2, y2 = center_x, center_y + distance // 2
+            else:
+                return {
+                    "success": False,
+                    "error": f'Invalid direction: {direction}. Use "left", "right", "up", or "down"'
+                }
+
+        # Validate coordinates
+        if any(coord < 0 for coord in [x1, y1, x2, y2]):
+            return {
+                "success": False,
+                "error": "All coordinates must be positive integers",
+                "coordinates": {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
+            }
+
+        # Build adb swipe command
+        cmd = ['adb']
+        if device_id:
+            cmd.extend(['-s', device_id])
+        cmd.extend(['shell', 'input', 'swipe', str(x1), str(y1), str(x2), str(y2), str(duration)])
+
+        # Execute swipe command
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        # Prepare response message
+        if direction:
+            message = f"Successfully swiped {direction} from ({x1}, {y1}) to ({x2}, {y2}) in {duration}ms"
+            action_type = f"directional_swipe_{direction}"
+        else:
+            message = f"Successfully swiped from ({x1}, {y1}) to ({x2}, {y2}) in {duration}ms"
+            action_type = "coordinate_swipe"
+
+        return {
+            "success": True,
+            "message": message,
+            "coordinates": {
+                "start": {"x": x1, "y": y1},
+                "end": {"x": x2, "y": y2}
+            },
+            "direction": direction if direction else None,
+            "distance": distance if direction else None,
+            "duration": duration,
+            "action_type": action_type,
+            "device_id": device_id or "default"
+        }
+
+    except subprocess.CalledProcessError as e:
+        return {
+            "success": False,
+            "error": f"Failed to execute swipe: {e}",
+            "stderr": e.stderr if e.stderr else "",
+            "action_type": "swipe"
+        }
+    except FileNotFoundError:
+        return {
+            "success": False,
+            "error": "ADB not found. Please ensure Android SDK is installed and adb is in PATH.",
+            "action_type": "swipe"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Unexpected error: {e}",
+            "action_type": "swipe"
+        }
+
+
+@mcp.tool()
 async def type_text(text: str, device_id: str = None, clear_first: bool = False) -> dict:
     """Type text into the currently focused input field on the Android device/emulator.
 
