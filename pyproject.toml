@@ -1,11 +1,31 @@
 [project]
-name = "android-puppeteer"
-version = "0.1.0"
-description = "Add your description here"
+name = "android-puppeteer-mcp"
+version = "1.0.1"
+description = "MCP server for Android automation with UI interaction, screenshots, and device control"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "mcp[cli]>=1.14.0",
     "Pillow>=10.0.0",
     "uiautomator2>=3.0.0",
+]
+
+[project.scripts]
+android-puppeteer-mcp = "main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+exclude = [
+    "/.git",
+    "/.venv",
+    "/ss",
+    "/videos",
+    "/__pycache__",
+    "*.pyc",
+    "*.pyo",
+    ".mcpregistry_*"
 ]

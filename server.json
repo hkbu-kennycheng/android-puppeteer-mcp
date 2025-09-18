@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.pedro-rivas/android-puppeteer-mcp",
+  "description": "MCP server for Android automation with UI interaction, screenshots, and device control",
+  "status": "active",
+  "repository": {
+    "url": "https://github.com/pedro-rivas/android-puppeteer-mcp",
+    "source": "github"
+  },
+  "version": "1.0.1",
+  "packages": [
+    {
+      "registry_type": "pypi",
+      "registry_base_url": "https://pypi.org",
+      "identifier": "android-puppeteer-mcp",
+      "version": "1.0.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
