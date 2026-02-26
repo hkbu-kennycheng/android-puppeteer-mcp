@@ -1,5 +1,8 @@
+from puppeteer import mcp
+
+
 def main():
-    print("Hello from android-puppeteer!")
+    mcp.run(transport='stdio')
 
 
 if __name__ == "__main__":
