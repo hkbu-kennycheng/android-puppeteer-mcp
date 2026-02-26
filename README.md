@@ -59,18 +59,10 @@ mcp-name: io.github.pedro-rivas/android-puppeteer-mcp
 1. **Clone the repository**
 
 ```shell
-git clone https://github.com/pedro-rivas/android-puppeteer-mcp.git
-cd android-puppeteer
+uvx --from git+https://github.com/pedro-rivas/android-puppeteer-mcp.git android-puppeteer-mcp
 ```
 
-2. **Install dependencies**
-
-```shell
-uv python install 3.10
-uv sync
-```
-
-3. **Setup Android device**
+2. **Setup Android device**
 
 ```shell
 # Enable USB debugging on your Android device
@@ -91,20 +83,16 @@ adb devices  # Verify device connection
    {
      "mcpServers": {
        "android-puppeteer": {
-         "command": "path/to/uv",
+         "command": "uvx",
          "args": [
-           "--directory",
-           "path/to/android-puppeteer",
-           "run",
-           "puppeteer.py"
+            "--from",
+            "git+https://github.com/pedro-rivas/android-puppeteer-mcp.git",
+            "android-puppeteer-mcp"
          ]
        }
      }
    }
    ```
-   Replace:
-   - `path/to/uv` with the actual path to your uv executable
-   - `path/to/android-puppeteer` with the absolute path to where you have cloned this repo
 
 3. **Restart Claude Desktop**
 
